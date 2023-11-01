@@ -1,8 +1,3 @@
-# import os
-# import openai
-# openai.api_key ="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" MINE...
-# print(openai.Model.list())
-
 
 import os
 import openai
