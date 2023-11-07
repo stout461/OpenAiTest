@@ -3,34 +3,43 @@ import json
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 
-API_KEY = open('API_KEY').read()
-SEARCH_ENGINE_ID = open('SEARCH_ENGINE_ID').read()
-search_query = 'how to make money'
-url = 'https://customsearch.googleapis.com/customsearch/v1'
-num = 5
-params = {
-    'q': search_query,
-    'key': API_KEY,
-    'cx': SEARCH_ENGINE_ID,
-    'start': 0,
-    'num': num
-}
-response = requests.get(url,params=params)
-data = response.json() # create a json object from the response
-temp = data['items']
-urlArray = [temp[i]['link'] for i in range(0,num)] #get the list of URL returned.
-## Functions to clean up webpage text so that we can read it. (aka returns only the words, and no tags)
-def tag_visible(element):
-    if element.parent.name in ['style', 'script', 'head', 'title', 'meta', '[document]']:
-        return False
-    if isinstance(element, Comment):
-        return False
-    return True
-def text_from_html(body):
-    soup = BeautifulSoup(body, 'html.parser')
-    texts = soup.findAll(text=True)
-    visible_texts = filter(tag_visible, texts)
-    return u" ".join(t.strip() for t in visible_texts)
+class GoogleSearchResults:
+    def __init__(self, api_key_file, search_engine_id_file, search_query, num_results=5):
+        self.API_KEY = open(api_key_file).read()
+        self.SEARCH_ENGINE_ID = open(search_engine_id_file).read()
+        self.search_query = search_query
+        self.num = num_results
+        self.url = 'https://customsearch.googleapis.com/customsearch/v1'
+        self.urlArray = []
+        self._get_search_results()
+
+    def _get_search_results(self):
+        params = {
+            'q': self.search_query,
+            'key': self.API_KEY,
+            'cx': self.SEARCH_ENGINE_ID,
+            'start': 0,
+            'num': self.num
+        }
+        response = requests.get(self.url, params=params)
+        data = response.json()
+        temp = data['items']
+        self.urlArray = [temp[i]['link'] for i in range(0, self.num)]
+
+    @staticmethod
+    def tag_visible(element):
+        if element.parent.name in ['style', 'script', 'head', 'title', 'meta', '[document]']:
+            return False
+        if isinstance(element, Comment):
+            return False
+        return True
+
+    @staticmethod
+    def text_from_html(body):
+        soup = BeautifulSoup(body, 'html.parser')
+        texts = soup.findAll(text=True)
+        visible_texts = filter(GoogleSearchResults.tag_visible, texts)
+        return u" ".join(t.strip() for t in visible_texts)
 
 class KeyWordFinder:
     def __init__(self, soup, search, rank):
@@ -38,46 +47,36 @@ class KeyWordFinder:
         self.rank = rank
         self.search = list(set(search.split()))
         count = 0
-        searchList = list(self.soup.split())
-        keyWordOccurencesTemp = dict.fromkeys(self.search,0)
-        for x in searchList:
-            if x in keyWordOccurencesTemp:
-                count +=1
-                keyWordOccurencesTemp[x] = keyWordOccurencesTemp.get(x) +1
+        search_list = list(self.soup.split())
+        key_word_occurrences_temp = dict.fromkeys(self.search, 0)
+        for x in search_list:
+            if x in key_word_occurrences_temp:
+                count += 1
+                key_word_occurrences_temp[x] = key_word_occurrences_temp.get(x) + 1
         self.count = count
-        self.keyWordOccurences = keyWordOccurencesTemp
+        self.key_word_occurrences = key_word_occurrences_temp
 
-    def printMapPretty(self):
+    def print_map_pretty(self):
         printstring = '\nWord Frequency List: \n'
         for x in self.search:
-            printstring += '   ' + x + ":" + str(self.keyWordOccurences.get(x)) + '\n'
+            printstring += '   ' + x + ":" + str(self.key_word_occurrences.get(x)) + '\n'
         return printstring
+
     def __str__(self):
-        return   '-------------------------------------------------------\n' + 'PageRank: ' + str(self.rank) + self.printMapPretty()#'\n Word Frequency List: \n' + str(self.keyWordOccurences.items())
+        return '-------------------------------------------------------\n' + 'PageRank: ' + str(self.rank) + self.print_map_pretty()
 
+class GoogleSearchManager:
+    def __init__(self, api_key_file, search_engine_id_file, search_query, num_results=5):
+        self.results = GoogleSearchResults(api_key_file, search_engine_id_file, search_query, num_results)
+        self.keyword_finders = [KeyWordFinder(GoogleSearchResults.text_from_html(requests.get(url).content), search_query, idx+1) for idx, url in enumerate(self.results.urlArray)]
 
+    def print_keyword_finder_results(self):
+        for finder in self.keyword_finders:
+            print(str(finder))
 
-
-#def keyWordFinder(soup,search):
-#    search = list(set(search.split()))
-#    searchList = list(soup.split())
-#    keyWordOccurences = dict.fromkeys(search,0)
-#    count = 0
-#    for x in searchList:
-#        count += 1
-#        if x in keyWordOccurences:
-#            keyWordOccurences[x] = keyWordOccurences.get(x) +1
-#    print(count)
-#    return keyWordOccurences
-
-count = 1;
-for x in urlArray:
-    #print('-------------------------------------')
-    #print("PageRank: " + str(count))
-    print(str(KeyWordFinder(text_from_html(requests.get(x).content),search_query,count)))
-    count+=1
-
-print(urlArray)
+# Usage
+search_manager = GoogleSearchManager('API_KEY', 'SEARCH_ENGINE_ID', 'how to make money')
+search_manager.print_keyword_finder_results()
 
 
 
