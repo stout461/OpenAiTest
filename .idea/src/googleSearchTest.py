@@ -3,6 +3,8 @@ import json
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from tabulate import tabulate
+import aiohttp
+import asyncio
 
 stop_words_set = set({"a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren't", "as",
                       "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can't", "cannot",
@@ -48,14 +50,16 @@ class GoogleSearchResults:
             return False
         if isinstance(element, Comment):
             return False
-        return True
+        if element.name in ['div', 'span']:
+            return True  # Include div and span tags that might contain relevant content
+        return True  # Include other elements by default
 
     @staticmethod
     def text_from_html(body):
-        soup = BeautifulSoup(body, 'html.parser')
-        texts = soup.findAll(text=True)
+        soup = BeautifulSoup(body, 'lxml')  # Change parser method to 'lxml' or 'html5lib'
+        texts = soup.find_all(text=True)
         visible_texts = filter(GoogleSearchResults.tag_visible, texts)
-        return u" ".join(t.strip() for t in visible_texts)
+        return " ".join(t.strip() for t in visible_texts)
 
 class KeyWordFinder:
     def __init__(self, soup, rank, search_query):
@@ -85,48 +89,64 @@ class KeyWordFinder:
         return '-------------------------------------------------------\n' + 'PageRank: ' + str(self.rank) + self.print_map_pretty()
 
 class GoogleSearchManager:
-    def __init__(self, results, num_results=5):
-        self.results = results
-        self.keyword_finders = [KeyWordFinder(GoogleSearchResults.text_from_html(requests.get(url).content), idx+1, self.results.search_query) for idx, url in enumerate(self.results.urlArray)]
+    async def get_keyword_finders(self, session, results):
+        keyword_finders = []
+        tasks = []
+        for idx, url in enumerate(results.urlArray):
+            task = asyncio.ensure_future(self.get_word_count(session, url, idx + 1, results.search_query))
+            tasks.append(task)
+        keyword_finders = await asyncio.gather(*tasks)
+        return keyword_finders
 
-    def print_keyword_finder_results(self):
-        for finder in self.keyword_finders:
-            print(str(finder))
+    async def get_word_count(self, session, url, rank, search_query):
+        async with session.get(url) as response:
+            body = await response.text()
+            soup = BeautifulSoup(body, 'html.parser')
+            visible_texts = filter(self.tag_visible, soup.find_all(text=True))
+            visible_text = " ".join(t.strip() for t in visible_texts)
+            return KeyWordFinder(visible_text, rank, search_query)
 
-class MultipleSearchQueriesManager:
-    def __init__(self, api_key_file, search_engine_id_file, search_queries, num_results=5):
-        self.search_results = {}
-        for query in search_queries:
-            results = GoogleSearchResults(api_key_file, search_engine_id_file, query, num_results)
-            search_manager = GoogleSearchManager(results, num_results)
-            self.search_results[query] = search_manager.keyword_finders
+    @staticmethod
+    def tag_visible(element):
+        if element.parent.name in ['style', 'script', 'head', 'title', 'meta', '[document]']:
+            return False
+        if isinstance(element, Comment):
+            return False
+        return True
 
-    def print_keyword_finder_results(self):
-        for query, keyword_finders in self.search_results.items():
-            print(f"Results for search query: '{query}'")
+    async def run(self, api_key_file, search_engine_id_file, search_query, num_results=5):
+        async with aiohttp.ClientSession() as session:
+            results = GoogleSearchResults(api_key_file, search_engine_id_file, search_query, num_results)
+            keyword_finders = await self.get_keyword_finders(session, results)
             for finder in keyword_finders:
                 print(str(finder))
-            print("\n")
 
-    def print_keyword_finder_results(self):
-        for query, keyword_finders in self.search_results.items():
-            print(f"Results for search query: '{query}'")
-            headers = ["Word", "Count"]
-            for finder in keyword_finders:
-                data = [(word, count) for word, count in finder.key_word_occurrences.items()]
-                print(tabulate(data, headers=headers, tablefmt="pretty"))
-            print("\n")
+class MultipleSearchQueriesManager:
+    async def get_search_results(self, session, api_key_file, search_engine_id_file, query, num_results=5):
+        results = GoogleSearchResults(api_key_file, search_engine_id_file, query, num_results)
+        search_manager = GoogleSearchManager()
+        return await search_manager.get_keyword_finders(session, results)
 
+    async def run_queries(self, api_key_file, search_engine_id_file, search_queries, num_results=5):
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for query in search_queries:
+                task = asyncio.ensure_future(self.get_search_results(session, api_key_file, search_engine_id_file, query, num_results))
+                tasks.append(task)
+            results = await asyncio.gather(*tasks)
+            for query, keyword_finders in zip(search_queries, results):
+                print(f"Results for search query: '{query}'")
+                for finder in keyword_finders:
+                    print(str(finder))
+                print("\n")
 
-# Example list of search queries
 search_queries = [
     'how to make money',
     'Get rich now'
     # Add more search queries as needed
 ]
+async def main():
+    manager = MultipleSearchQueriesManager()
+    await manager.run_queries('API_KEY', 'SEARCH_ENGINE_ID', search_queries)
 
-# Create a MultipleSearchQueriesManager instance
-multiple_search_queries_manager = MultipleSearchQueriesManager('API_KEY', 'SEARCH_ENGINE_ID', search_queries)
-
-# Print the keyword finder results for each search query
-multiple_search_queries_manager.print_keyword_finder_results()
+asyncio.run(main())
